@@ -107,6 +107,12 @@
 
   .empty{border:1px dashed var(--line);border-radius:13px;padding:22px 16px;text-align:center;color:var(--muted);font-size:13.5px;}
 
+  /* ---------- Missions ---------- */
+  .missions{margin-top:26px;}
+  .mgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:11px;}
+  .act--mission{background:var(--brass);color:#fff;}
+  .act--mission:hover{background:var(--brass-deep);}
+
   /* ---------- Ledger ---------- */
   .ledger{margin-top:34px;}
   .ledger__head{display:flex;align-items:baseline;justify-content:space-between;margin:0 4px 12px;}
@@ -185,6 +191,11 @@
     </div>
   </header>
 
+  <section class="missions">
+    <div class="col__head"><h2 class="col__title">Missions</h2><button class="addbtn" id="addMission">+ New mission</button></div>
+    <div class="mgrid" id="missionList"></div>
+  </section>
+
   <div class="cols">
     <section>
       <div class="col__head"><h2 class="col__title">Earn</h2><button class="addbtn" id="addEarn">+ New goal</button></div>
@@ -260,6 +271,7 @@ const CONFIG = {
   url:    "https://ngfdxboxmzgqqdjfvvdu.supabase.co",   // e.g. https://abcdxyz.supabase.co
   anonKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5nZmR4Ym94bXpncXFkamZ2dmR1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE5OTMyNzMsImV4cCI6MjA5NzU2OTI3M30.xa1OER3mpaWFtmvk9klIKaYP7ExKKnZr5BYoLECHU2I"       // the long "anon public" key
 };
+
 /* ============================================================ */
 
 const CACHE_KEY = "pt:cache:v1";
@@ -281,11 +293,16 @@ const DEFAULT = {
     {id:id(),name:"Dinner out",cost:250,note:""},
     {id:id(),name:"Big treat / new gear",cost:500,note:""},
   ],
+  missions:[
+    {id:id(),name:"Finish a one-off project",pts:300,note:"A mission disappears once you complete it."},
+    {id:id(),name:"Hit a personal milestone",pts:500,note:""},
+  ],
   history:[]
 };
 
 function id(){ return Math.random().toString(36).slice(2,10); }
 function fmt(n){ return n.toLocaleString("en-US"); }
+function collOf(mode){ return mode==="earn"?state.earn : mode==="mission"?state.missions : state.rewards; }
 function configured(){ return CONFIG.url.startsWith("http") && CONFIG.anonKey.length > 20; }
 function syncReady(){ return configured() && !!code; }
 
@@ -393,6 +410,14 @@ function redeem(reward){
   save(); render(); toast(`Redeemed — ${reward.name}`);
 }
 function removeEntry(eid){ state.history = state.history.filter(h=>h.id!==eid); save(); render(); }
+function completeMission(m){
+  if(!m) return;
+  state.history.push({id:id(),ts:new Date().toISOString(),kind:"earn",label:m.name,amount:m.pts});
+  state.missions = state.missions.filter(x=>x.id!==m.id);
+  save(); render();
+  const s=$("#seal"); s.classList.remove("pulse"); void s.offsetWidth; s.classList.add("pulse");
+  toast(`Mission complete — +${m.pts}`);
+}
 
 /* ---------- rendering ---------- */
 let shownBalance = 0;
@@ -407,11 +432,25 @@ function animateBalance(to){
 function esc(s){ return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
 
 function render(){
+  state.missions = state.missions || []; state.earn = state.earn || []; state.rewards = state.rewards || []; state.history = state.history || [];
   animateBalance(balance());
   const t = totals();
   $("#stWeek").textContent = "+"+fmt(t.week);
   $("#stEarned").textContent = fmt(t.earned);
   $("#stSpent").textContent = "−"+fmt(t.spent);
+
+  const mL=$("#missionList"); mL.innerHTML="";
+  if(!state.missions.length) mL.innerHTML=`<div class="empty">No missions yet. Add a one-off goal — it vanishes when you complete it.</div>`;
+  state.missions.forEach(m=>{
+    const c=document.createElement("div"); c.className="card";
+    c.innerHTML=`<div class="card__tools"><button class="iconbtn" data-edit="mission" data-id="${m.id}">Edit</button></div>
+      <span class="card__eyebrow">Mission</span>
+      <div class="card__name">${esc(m.name)}</div>
+      ${m.note?`<div class="card__note">${esc(m.note)}</div>`:""}
+      <div class="card__foot"><span class="token"><span class="token__coin"></span>${fmt(m.pts)}</span>
+      <button class="act act--mission" data-complete="${m.id}">Complete</button></div>`;
+    mL.appendChild(c);
+  });
 
   const eL=$("#earnList"); eL.innerHTML="";
   if(!state.earn.length) eL.innerHTML=`<div class="empty">No goals yet. Add something you want to reward yourself for.</div>`;
@@ -457,10 +496,12 @@ function render(){
 /* ---------- item modal ---------- */
 let editing=null, segType="weekly";
 function openModal(mode,item){
-  editing={mode,id:item?item.id:null}; const isEarn=mode==="earn";
-  $("#mTitle").textContent=item?(isEarn?"Edit goal":"Edit reward"):(isEarn?"New goal":"New reward");
-  $("#mPtsLabel").textContent=isEarn?"Points":"Cost";
-  $("#mName").value=item?item.name:""; $("#mPts").value=item?(isEarn?item.pts:item.cost):"";
+  editing={mode,id:item?item.id:null};
+  const isEarn=mode==="earn", isCost=mode==="spend";
+  const titles={earn:["New goal","Edit goal"],mission:["New mission","Edit mission"],reward:["New reward","Edit reward"]};
+  $("#mTitle").textContent=titles[mode][item?1:0];
+  $("#mPtsLabel").textContent=isCost?"Cost":"Points";
+  $("#mName").value=item?item.name:""; $("#mPts").value=item?(isCost?item.cost:item.pts):"";
   $("#mNote").value=item?(item.note||""):""; $("#mTypeWrap").style.display=isEarn?"block":"none";
   segType=isEarn?(item?item.type:"weekly"):"weekly";
   document.querySelectorAll("#mSeg button").forEach(b=>b.classList.toggle("on",b.dataset.type===segType));
@@ -476,6 +517,9 @@ function saveModal(){
   if(mode==="earn"){
     if(eid){ const g=state.earn.find(x=>x.id===eid); Object.assign(g,{name,pts:num,note,type:segType}); }
     else state.earn.push({id:id(),name,type:segType,pts:num,note});
+  }else if(mode==="mission"){
+    if(eid){ const m=state.missions.find(x=>x.id===eid); Object.assign(m,{name,pts:num,note}); }
+    else state.missions.push({id:id(),name,pts:num,note});
   }else{
     if(eid){ const r=state.rewards.find(x=>x.id===eid); Object.assign(r,{name,cost:num,note}); }
     else state.rewards.push({id:id(),name,cost:num,note});
@@ -485,6 +529,7 @@ function saveModal(){
 function deleteItem(){
   const {mode,id:eid}=editing; if(!eid) return;
   if(mode==="earn") state.earn=state.earn.filter(x=>x.id!==eid);
+  else if(mode==="mission") state.missions=state.missions.filter(x=>x.id!==eid);
   else state.rewards=state.rewards.filter(x=>x.id!==eid);
   save(); closeModal(); render();
 }
@@ -513,14 +558,16 @@ document.addEventListener("click", e=>{
   const t=e.target;
   if(t.dataset.award){ award(state.earn.find(g=>g.id===t.dataset.award)); }
   else if(t.dataset.redeem){ redeem(state.rewards.find(r=>r.id===t.dataset.redeem)); }
+  else if(t.dataset.complete){ completeMission(state.missions.find(m=>m.id===t.dataset.complete)); }
   else if(t.dataset.undo){ removeEntry(t.dataset.undo); }
   else if(t.dataset.edit){
     const mode=t.dataset.edit, eid=t.dataset.id;
-    openModal(mode, mode==="earn"? state.earn.find(x=>x.id===eid) : state.rewards.find(x=>x.id===eid));
+    openModal(mode, collOf(mode).find(x=>x.id===eid));
   }
 });
 $("#addEarn").onclick=()=>openModal("earn",null);
 $("#addReward").onclick=()=>openModal("reward",null);
+$("#addMission").onclick=()=>openModal("mission",null);
 $("#mCancel").onclick=closeModal; $("#mSave").onclick=saveModal; $("#mDelete").onclick=deleteItem;
 $("#scrim").onclick=e=>{ if(e.target===$("#scrim")) closeModal(); };
 $("#mSeg").onclick=e=>{ if(e.target.dataset.type){ segType=e.target.dataset.type; document.querySelectorAll("#mSeg button").forEach(b=>b.classList.toggle("on",b.dataset.type===segType)); } };
